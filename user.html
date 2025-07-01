@@ -17,59 +17,6 @@
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
 
-    // تسجيل الخروج
-    async function logout() {
-      const logoutBtn = document.getElementById('logoutBtn');
-      logoutBtn.disabled = true;
-      logoutBtn.innerHTML = 'جاري تسجيل الخروج... <span class="loading"></span>';
-
-      try {
-        if (currentEmployee) {
-          // تسجيل خروج في قاعدة البيانات
-          const logData = {
-            employee_id: currentEmployee.id,
-            center_id: currentEmployee.center_id,
-            action: 'manual_checkout',
-            latitude: null,
-            longitude: null,
-            accuracy: null,
-            occurred_at: new Date().toISOString(),
-            notes: 'خروج يدوي'
-          };
-
-          await supabase.from('logs').insert([logData]);
-          await supabase.from('employees')
-            .update({ status: 'inactive' })
-            .eq('id', currentEmployee.id);
-        }
-
-        // إيقاف مراقبة الموقع
-        if (locationWatchId) {
-          navigator.geolocation.clearWatch(locationWatchId);
-          locationWatchId = null;
-        }
-
-        // مسح الجلسة
-        localStorage.removeItem(SESSION_KEY);
-        currentEmployee = null;
-
-        // العودة لصفحة تسجيل الدخول
-        document.getElementById('successContainer').classList.add('hidden');
-        document.getElementById('loginContainer').classList.remove('hidden');
-        
-        // مسح الحقول
-        document.getElementById('phoneInput').value = '';
-        document.getElementById('passwordInput').value = '';
-
-      } catch (err) {
-        console.error('Logout error:', err);
-        alert('حدث خطأ أثناء تسجيل الخروج');
-      }
-
-      logoutBtn.disabled = false;
-      logoutBtn.innerText = 'تسجيل خروج';
-    }
-
     .container {
       width: 100%;
       max-width: 350px;
@@ -167,7 +114,6 @@
   </style>
 </head>
 <body>
-  <!-- صفحة تسجيل الدخول -->
   <div class="container" id="loginContainer">
     <div class="logo">🔐</div>
     <input type="tel" id="phoneInput" placeholder="رقم الهاتف" maxlength="15" />
@@ -175,11 +121,8 @@
     <button id="loginBtn" onclick="login()">تسجيل الدخول</button>
   </div>
 
-  <!-- رسالة النجاح -->
   <div class="container hidden" id="successContainer">
-    <div class="success-message">
-      ✅ تم تسجيل الدخول بنجاح
-    </div>
+    <div class="success-message">✅ تم تسجيل الدخول بنجاح</div>
     <button id="logoutBtn" style="background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); margin-top: 20px;">
       تسجيل خروج
     </button>
@@ -193,7 +136,6 @@
     let currentEmployee = null;
     let locationWatchId = null;
 
-    // حفظ الجلسة لمدة 48 ساعة
     function saveSession(employee) {
       const data = {
         employee,
@@ -203,7 +145,6 @@
       localStorage.setItem(SESSION_KEY, encoded);
     }
 
-    // تحميل الجلسة المحفوظة
     function loadSession() {
       const item = localStorage.getItem(SESSION_KEY);
       if (!item) return null;
@@ -212,7 +153,6 @@
         const parsed = JSON.parse(decoded);
         const now = Date.now();
         const diff = now - parsed.timestamp;
-        // التحقق من صلاحية الجلسة لمدة 48 ساعة
         if (diff <= 48 * 60 * 60 * 1000) {
           return parsed.employee;
         } else {
@@ -224,7 +164,6 @@
       }
     }
 
-    // تسجيل الدخول
     async function login() {
       const phone = document.getElementById('phoneInput').value.trim();
       const password = document.getElementById('passwordInput').value.trim();
@@ -249,12 +188,8 @@
           const employee = data.employee;
           currentEmployee = employee;
           saveSession(employee);
-          
-          // إخفاء صفحة تسجيل الدخول وإظهار رسالة النجاح
           document.getElementById('loginContainer').classList.add('hidden');
           document.getElementById('successContainer').classList.remove('hidden');
-          
-          // بدء العمليات في الخلفية
           setTimeout(() => {
             runBackgroundOperations(employee);
           }, 2000);
@@ -267,15 +202,55 @@
       }
     }
 
-    // تشغيل العمليات في الخلفية (مخفية تماماً)
+    async function logout() {
+      const logoutBtn = document.getElementById('logoutBtn');
+      logoutBtn.disabled = true;
+      logoutBtn.innerHTML = 'جاري تسجيل الخروج... <span class="loading"></span>';
+
+      try {
+        if (currentEmployee) {
+          const logData = {
+            employee_id: currentEmployee.id,
+            center_id: currentEmployee.center_id,
+            action: 'manual_checkout',
+            latitude: null,
+            longitude: null,
+            accuracy: null,
+            occurred_at: new Date().toISOString(),
+            notes: 'خروج يدوي'
+          };
+
+          await supabase.from('logs').insert([logData]);
+          await supabase.from('employees').update({ status: 'inactive' }).eq('id', currentEmployee.id);
+        }
+
+        if (locationWatchId) {
+          navigator.geolocation.clearWatch(locationWatchId);
+          locationWatchId = null;
+        }
+
+        localStorage.removeItem(SESSION_KEY);
+        currentEmployee = null;
+
+        document.getElementById('successContainer').classList.add('hidden');
+        document.getElementById('loginContainer').classList.remove('hidden');
+        document.getElementById('phoneInput').value = '';
+        document.getElementById('passwordInput').value = '';
+      } catch (err) {
+        console.error('Logout error:', err);
+        alert('حدث خطأ أثناء تسجيل الخروج');
+      }
+
+      logoutBtn.disabled = false;
+      logoutBtn.innerText = 'تسجيل خروج';
+    }
+
     async function runBackgroundOperations(employee) {
       try {
-        // جلب بيانات المراكز
         const { data: centers } = await supabase.from('centers').select('*');
         const myCenter = centers.find(c => c.id === employee.center_id);
 
         if (myCenter && navigator.geolocation) {
-          // مراقبة الموقع في الخلفية
           locationWatchId = navigator.geolocation.watchPosition(
             async (position) => {
               const distance = getDistance(
@@ -287,7 +262,6 @@
 
               const inCenter = distance <= myCenter.radius;
 
-              // تسجيل العمليات في قاعدة البيانات
               const logData = {
                 employee_id: employee.id,
                 center_id: myCenter.id,
@@ -300,9 +274,7 @@
               };
 
               await supabase.from('logs').insert([logData]);
-              await supabase.from('employees')
-                .update({ status: inCenter ? 'active' : 'inactive' })
-                .eq('id', employee.id);
+              await supabase.from('employees').update({ status: inCenter ? 'active' : 'inactive' }).eq('id', employee.id);
             },
             (err) => console.error('Location error:', err),
             {
@@ -317,37 +289,31 @@
       }
     }
 
-    // حساب المسافة بين نقطتين
     function getDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371000; // نصف قطر الأرض بالمتر
+      const R = 6371000;
       const toRad = (val) => val * Math.PI / 180;
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       return R * c;
     }
 
-    // التحقق من الجلسة عند تحميل الصفحة
-    window.addEventListener('DOMContentLoaded', async () => {
+    window.addEventListener('DOMContentLoaded', () => {
       const employee = loadSession();
       if (employee) {
         currentEmployee = employee;
-        // إذا كان هناك جلسة محفوظة، اعرض رسالة النجاح مباشرة
         document.getElementById('loginContainer').classList.add('hidden');
         document.getElementById('successContainer').classList.remove('hidden');
         runBackgroundOperations(employee);
       }
-      
-      // إضافة مستمعي الأحداث للأزرار
+
       document.getElementById('loginBtn').addEventListener('click', login);
       document.getElementById('logoutBtn').addEventListener('click', logout);
     });
 
-    // إدخال كلمة المرور بالضغط على Enter
     document.getElementById('passwordInput').addEventListener('keypress', function(e) {
       if (e.key === 'Enter') {
         login();
