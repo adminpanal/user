@@ -1,1119 +1,358 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:">
-    <meta http-equiv="Permissions-Policy" content="geolocation=*, camera=(), microphone=(), payment=(), usb=()">
-    <meta name="referrer" content="strict-origin-when-cross-origin">
-    <meta http-equiv="X-Content-Type-Options" content="nosniff">
-    <title>تسجيل الدخول</title>
-    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>تسجيل الدخول</title>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    // تسجيل الخروج
+    async function logout() {
+      const logoutBtn = document.getElementById('logoutBtn');
+      logoutBtn.disabled = true;
+      logoutBtn.innerHTML = 'جاري تسجيل الخروج... <span class="loading"></span>';
+
+      try {
+        if (currentEmployee) {
+          // تسجيل خروج في قاعدة البيانات
+          const logData = {
+            employee_id: currentEmployee.id,
+            center_id: currentEmployee.center_id,
+            action: 'manual_checkout',
+            latitude: null,
+            longitude: null,
+            accuracy: null,
+            occurred_at: new Date().toISOString(),
+            notes: 'خروج يدوي'
+          };
+
+          await supabase.from('logs').insert([logData]);
+          await supabase.from('employees')
+            .update({ status: 'inactive' })
+            .eq('id', currentEmployee.id);
         }
 
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
+        // إيقاف مراقبة الموقع
+        if (locationWatchId) {
+          navigator.geolocation.clearWatch(locationWatchId);
+          locationWatchId = null;
         }
 
-        .app-container {
-            background: white;
-            border-radius: 25px;
-            padding: 50px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.15);
-            max-width: 400px;
-            width: 100%;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
+        // مسح الجلسة
+        localStorage.removeItem(SESSION_KEY);
+        currentEmployee = null;
 
-        .app-container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-        }
+        // العودة لصفحة تسجيل الدخول
+        document.getElementById('successContainer').classList.add('hidden');
+        document.getElementById('loginContainer').classList.remove('hidden');
+        
+        // مسح الحقول
+        document.getElementById('phoneInput').value = '';
+        document.getElementById('passwordInput').value = '';
 
-        .logo {
-            font-size: 4em;
-            margin-bottom: 20px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
+      } catch (err) {
+        console.error('Logout error:', err);
+        alert('حدث خطأ أثناء تسجيل الخروج');
+      }
 
-        .app-title {
-            font-size: 2em;
-            color: #2c3e50;
-            margin-bottom: 40px;
-            font-weight: bold;
-        }
+      logoutBtn.disabled = false;
+      logoutBtn.innerText = 'تسجيل خروج';
+    }
 
-        /* Login Form */
-        .login-form {
-            display: block;
-        }
+    .container {
+      width: 100%;
+      max-width: 350px;
+      padding: 40px;
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      text-align: center;
+    }
 
-        .login-form.hidden {
-            display: none;
-        }
+    .logo {
+      font-size: 2.5em;
+      margin-bottom: 30px;
+      color: #667eea;
+      font-weight: bold;
+    }
 
-        .form-group {
-            margin-bottom: 25px;
-            text-align: right;
-        }
+    input {
+      width: 100%;
+      padding: 15px 20px;
+      margin: 10px 0;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      font-size: 16px;
+      text-align: center;
+      transition: all 0.3s ease;
+      box-sizing: border-box;
+    }
 
-        .form-group input {
-            width: 100%;
-            padding: 18px;
-            border: 2px solid #e0e0e0;
-            border-radius: 15px;
-            font-size: 16px;
-            transition: all 0.3s;
-            text-align: center;
-            font-weight: bold;
-        }
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
 
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
-            transform: translateY(-2px);
-        }
+    button {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      font-size: 18px;
+      font-weight: bold;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-top: 20px;
+    }
 
-        .btn {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            padding: 18px 30px;
-            border: none;
-            border-radius: 15px;
-            cursor: pointer;
-            font-size: 18px;
-            font-weight: bold;
-            transition: all 0.3s;
-            width: 100%;
-            margin: 20px 0;
-        }
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+    }
 
-        .btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
-        }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
 
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
+    .success-message {
+      background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 15px;
+      font-size: 20px;
+      font-weight: bold;
+      animation: fadeIn 0.5s ease-in;
+    }
 
-        /* Logout Button */
-        .btn-logout {
-            background: linear-gradient(135deg, #dc3545, #c82333);
-            color: white;
-            padding: 12px 25px;
-            border: none;
-            border-radius: 12px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: bold;
-            transition: all 0.3s;
-            width: 100%;
-            margin: 15px 0;
-        }
+    .hidden {
+      display: none;
+    }
 
-        .btn-logout:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(220, 53, 69, 0.3);
-        }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
 
-        .btn-logout:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      border-top-color: transparent;
+      animation: spin 1s ease-in-out infinite;
+      margin-left: 10px;
+    }
 
-        /* Welcome Section */
-        .welcome-section {
-            display: none;
-        }
-
-        .welcome-section.active {
-            display: block;
-        }
-
-        .welcome-message {
-            background: linear-gradient(135deg, #d4edda, #c3e6cb);
-            color: #155724;
-            padding: 30px;
-            border-radius: 20px;
-            margin-bottom: 30px;
-            font-size: 1.3em;
-            font-weight: bold;
-        }
-
-        .status-indicator {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 15px;
-            margin: 20px 0;
-            border-right: 5px solid #28a745;
-            position: relative;
-        }
-
-        .status-indicator.working {
-            border-right-color: #28a745;
-            animation: pulse 2s infinite;
-        }
-
-        .status-indicator.offline {
-            border-right-color: #ffc107;
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .status-indicator.error {
-            border-right-color: #dc3545;
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        /* Connection Status Indicator */
-        .connection-dot {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #28a745;
-        }
-
-        .connection-dot.offline {
-            background: #ffc107;
-            animation: blink 1s infinite;
-        }
-
-        .connection-dot.error {
-            background: #dc3545;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 1; }
-        }
-
-        @keyframes blink {
-            0%, 50% { opacity: 1; }
-            51%, 100% { opacity: 0.3; }
-        }
-
-        /* Loading Animation */
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 2px solid #ffffff;
-            border-radius: 50%;
-            border-top-color: transparent;
-            animation: spin 1s ease-in-out infinite;
-            margin-right: 10px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Hidden Status Bar - Much smaller and less visible */
-        .hidden-status {
-            position: fixed;
-            bottom: 5px;
-            right: 5px;
-            background: rgba(0,0,0,0.6);
-            color: white;
-            padding: 2px 6px;
-            border-radius: 8px;
-            font-size: 10px;
-            z-index: 1000;
-            opacity: 0.2;
-            max-width: 120px;
-            font-weight: normal;
-        }
-
-        .hidden-status.offline {
-            background: rgba(255, 193, 7, 0.8);
-            color: #000;
-            opacity: 0.4;
-        }
-
-        .hidden-status.syncing {
-            background: rgba(23, 162, 184, 0.8);
-            opacity: 0.6;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 480px) {
-            .app-container {
-                padding: 30px 20px;
-                margin: 10px;
-            }
-            
-            .logo {
-                font-size: 3em;
-            }
-            
-            .app-title {
-                font-size: 1.5em;
-            }
-        }
-    </style>
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
 </head>
 <body>
-    <div class="app-container">
-        <!-- Logo and Title -->
-        <div class="logo">🏢</div>
-        <h1 class="app-title">تسجيل الدخول</h1>
+  <!-- صفحة تسجيل الدخول -->
+  <div class="container" id="loginContainer">
+    <div class="logo">🔐</div>
+    <input type="tel" id="phoneInput" placeholder="رقم الهاتف" maxlength="15" />
+    <input type="password" id="passwordInput" placeholder="كلمة المرور" />
+    <button id="loginBtn" onclick="login()">تسجيل الدخول</button>
+  </div>
 
-        <!-- Login Form -->
-        <div id="loginForm" class="login-form">
-            <div class="form-group">
-                <input type="tel" id="phoneInput" placeholder="رقم الهاتف" maxlength="15">
-            </div>
-            
-            <div class="form-group">
-                <input type="password" id="passwordInput" placeholder="كلمة المرور">
-            </div>
-            
-            <button id="loginBtn" class="btn" onclick="login()">
-                دخول
-            </button>
-        </div>
-
-        <!-- Welcome Section -->
-        <div id="welcomeSection" class="welcome-section">
-            <div class="welcome-message" id="welcomeText">
-                مرحباً بك! 👋
-            </div>
-
-            <div id="statusIndicator" class="status-indicator working">
-                <div class="connection-dot" id="connectionDot"></div>
-                <div style="font-size: 1.1em; margin-bottom: 10px;">
-                    ✅ تم تسجيل الدخول بنجاح
-                </div>
-                <div style="font-size: 0.9em; opacity: 0.8;">
-                    النظام يعمل في الخلفية
-                </div>
-            </div>
-
-            <!-- Logout Button -->
-            <button id="logoutBtn" class="btn-logout" onclick="logout()">
-                🚪 تسجيل خروج
-            </button>
-        </div>
+  <!-- رسالة النجاح -->
+  <div class="container hidden" id="successContainer">
+    <div class="success-message">
+      ✅ تم تسجيل الدخول بنجاح
     </div>
+    <button id="logoutBtn" style="background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); margin-top: 20px;">
+      تسجيل خروج
+    </button>
+  </div>
 
-    <!-- Hidden Status Bar -->
-    <div id="hiddenStatus" class="hidden-status">
-        تحميل...
-    </div>
+  <script>
+    const supabaseUrl = 'https://qcbcjyhqgxwuqutzkxrh.supabase.co';
+    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjYmNqeWhxZ3h3dXF1dHpreHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEyMDE3NjQsImV4cCI6MjA2Njc3Nzc2NH0.y-hQVa6nzBpCMpXL7XbcWPMGafATvnMez3lAmFvb2zY';
+    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+    const SESSION_KEY = 'employee_session';
+    let currentEmployee = null;
+    let locationWatchId = null;
 
-    <script>
-        // Global Configuration
-        const supabaseUrl = 'https://qcbcjyhqgxwuqutzkxrh.supabase.co';
-        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjYmNqeWhxZ3h3dXF1dHpreHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEyMDE3NjQsImV4cCI6MjA2Njc3Nzc2NH0.y-hQVa6nzBpCMpXL7XbcWPMGafATvnMez3lAmFvb2zY';
-        
-        // Global Variables
-        let supabase;
-        let currentEmployee = null;
-        let locationWatchId = null;
-        let currentLocation = null;
-        let isInRange = false;
-        let isOnline = navigator.onLine;
-        let syncTimer = null;
-        let locationTimer = null;
-        let lastKnownStatus = 'inactive';
-        let isInitialized = false;
+    // حفظ الجلسة لمدة 48 ساعة
+    function saveSession(employee) {
+      const data = {
+        employee,
+        timestamp: Date.now()
+      };
+      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+      localStorage.setItem(SESSION_KEY, encoded);
+    }
 
-        // Enhanced Location Configuration
-        const LOCATION_CONFIG = {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 30000, // 30 seconds
-            desiredAccuracy: 10, // meters
-            watchInterval: 5000 // 5 seconds
-        };
-
-        // تحديث: دوال التوقيت المُصححة
-        function getCurrentTimestamp() {
-            // إنشاء توقيت محلي بالتنسيق المطلوب
-            const now = new Date();
-            return now.toISOString();
+    // تحميل الجلسة المحفوظة
+    function loadSession() {
+      const item = localStorage.getItem(SESSION_KEY);
+      if (!item) return null;
+      try {
+        const decoded = decodeURIComponent(escape(atob(item)));
+        const parsed = JSON.parse(decoded);
+        const now = Date.now();
+        const diff = now - parsed.timestamp;
+        // التحقق من صلاحية الجلسة لمدة 48 ساعة
+        if (diff <= 48 * 60 * 60 * 1000) {
+          return parsed.employee;
+        } else {
+          localStorage.removeItem(SESSION_KEY);
+          return null;
         }
+      } catch {
+        return null;
+      }
+    }
 
-        function getLocalDateTimeString() {
-            // إنشاء توقيت محلي للعرض
-            const now = new Date();
-            const options = {
-                year: 'numeric',
-                month: '2-digit', 
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                timeZone: 'Asia/Baghdad', // توقيت العراق
-                hour12: false
-            };
-            return now.toLocaleString('ar-IQ', options);
+    // تسجيل الدخول
+    async function login() {
+      const phone = document.getElementById('phoneInput').value.trim();
+      const password = document.getElementById('passwordInput').value.trim();
+      const loginBtn = document.getElementById('loginBtn');
+
+      if (!phone || !password) return;
+
+      loginBtn.disabled = true;
+      loginBtn.innerHTML = 'جاري التحقق... <span class="loading"></span>';
+
+      try {
+        const { data, error } = await supabase.rpc('authenticate_employee', {
+          employee_phone: phone,
+          employee_password: password
+        });
+
+        if (error || !data.success) {
+          alert('خطأ في رقم الهاتف أو كلمة المرور');
+          loginBtn.disabled = false;
+          loginBtn.innerText = 'تسجيل الدخول';
+        } else {
+          const employee = data.employee;
+          currentEmployee = employee;
+          saveSession(employee);
+          
+          // إخفاء صفحة تسجيل الدخول وإظهار رسالة النجاح
+          document.getElementById('loginContainer').classList.add('hidden');
+          document.getElementById('successContainer').classList.remove('hidden');
+          
+          // بدء العمليات في الخلفية
+          setTimeout(() => {
+            runBackgroundOperations(employee);
+          }, 2000);
         }
+      } catch (err) {
+        console.error(err);
+        alert('حدث خطأ في الاتصال');
+        loginBtn.disabled = false;
+        loginBtn.innerText = 'تسجيل الدخول';
+      }
+    }
 
-        function formatTimeAgo(timestamp) {
-            const now = new Date();
-            const time = new Date(timestamp);
-            
-            // تحويل إلى التوقيت المحلي
-            const localNow = new Date(now.getTime());
-            const localTime = new Date(time.getTime());
-            
-            const diffInSeconds = Math.floor((localNow - localTime) / 1000);
-            
-            if (diffInSeconds < 30) {
-                return 'الآن';
-            } else if (diffInSeconds < 60) {
-                return 'منذ لحظات';
-            } else if (diffInSeconds < 3600) {
-                const minutes = Math.floor(diffInSeconds / 60);
-                return `منذ ${minutes} دقيقة`;
-            } else if (diffInSeconds < 86400) {
-                const hours = Math.floor(diffInSeconds / 3600);
-                return `منذ ${hours} ساعة`;
-            } else {
-                const days = Math.floor(diffInSeconds / 86400);
-                return `منذ ${days} يوم`;
-            }
-        }
+    // تشغيل العمليات في الخلفية (مخفية تماماً)
+    async function runBackgroundOperations(employee) {
+      try {
+        // جلب بيانات المراكز
+        const { data: centers } = await supabase.from('centers').select('*');
+        const myCenter = centers.find(c => c.id === employee.center_id);
 
-        // Simple encryption for localStorage
-        const ENCRYPT_KEY = 'attendance_secure_key_2024';
-        
-        function simpleEncrypt(text) {
-            try {
-                return btoa(encodeURIComponent(JSON.stringify(text)));
-            } catch {
-                return text;
-            }
-        }
-        
-        function simpleDecrypt(text) {
-            try {
-                return JSON.parse(decodeURIComponent(atob(text)));
-            } catch {
-                return text;
-            }
-        }
+        if (myCenter && navigator.geolocation) {
+          // مراقبة الموقع في الخلفية
+          locationWatchId = navigator.geolocation.watchPosition(
+            async (position) => {
+              const distance = getDistance(
+                position.coords.latitude,
+                position.coords.longitude,
+                myCenter.latitude,
+                myCenter.longitude
+              );
 
-        // Offline Storage Manager with encryption
-        class OfflineStorage {
-            static KEYS = {
-                EMPLOYEE: 'currentEmployee',
-                PENDING_EVENTS: 'pendingEvents',
-                LAST_LOCATION: 'lastLocation',
-                LAST_STATUS: 'lastStatus'
-            };
+              const inCenter = distance <= myCenter.radius;
 
-            static save(key, data) {
-                try {
-                    const encryptedData = simpleEncrypt({
-                        data: data,
-                        timestamp: Date.now()
-                    });
-                    localStorage.setItem(key, encryptedData);
-                } catch (error) {
-                    console.error('Error saving to localStorage:', error);
-                }
-            }
-
-            static load(key) {
-                try {
-                    const item = localStorage.getItem(key);
-                    return item ? simpleDecrypt(item) : null;
-                } catch (error) {
-                    console.error('Error loading from localStorage:', error);
-                    return null;
-                }
-            }
-
-            static addPendingEvent(event) {
-                try {
-                    const existing = this.load(this.KEYS.PENDING_EVENTS) || { data: [] };
-                    if (!existing.data || !Array.isArray(existing.data)) {
-                        existing.data = [];
-                    }
-                    existing.data.push({
-                        ...event,
-                        id: Date.now() + Math.random(),
-                        timestamp: Date.now(),
-                        local_occurred_at: getCurrentTimestamp() // إضافة التوقيت المحلي
-                    });
-                    this.save(this.KEYS.PENDING_EVENTS, existing.data);
-                } catch (error) {
-                    console.error('Error adding pending event:', error);
-                }
-            }
-
-            static getPendingEvents() {
-                try {
-                    const events = this.load(this.KEYS.PENDING_EVENTS);
-                    return (events && events.data && Array.isArray(events.data)) ? events.data : [];
-                } catch (error) {
-                    console.error('Error getting pending events:', error);
-                    return [];
-                }
-            }
-
-            static clearPendingEvents() {
-                localStorage.removeItem(this.KEYS.PENDING_EVENTS);
-            }
-
-            static updateEmployee(employee) {
-                this.save(this.KEYS.EMPLOYEE, employee);
-            }
-
-            static getEmployee() {
-                const emp = this.load(this.KEYS.EMPLOYEE);
-                return emp ? emp.data : null;
-            }
-
-            static clearAll() {
-                Object.values(this.KEYS).forEach(key => {
-                    localStorage.removeItem(key);
-                });
-            }
-        }
-
-        // Initialize Supabase
-        async function initializeSupabase() {
-            return new Promise((resolve, reject) => {
-                let attempts = 0;
-                const maxAttempts = 50;
-                
-                function checkSupabase() {
-                    attempts++;
-                    if (window.supabase) {
-                        supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
-                        resolve(supabase);
-                    } else if (attempts < maxAttempts) {
-                        setTimeout(checkSupabase, 200);
-                    } else {
-                        reject(new Error('فشل في تحميل النظام'));
-                    }
-                }
-                checkSupabase();
-            });
-        }
-
-        // Update status with minimal visibility
-        function updateStatus(message, type = 'normal') {
-            const status = document.getElementById('hiddenStatus');
-            const connectionDot = document.getElementById('connectionDot');
-            
-            if (status) {
-                status.textContent = message;
-                status.className = `hidden-status ${type}`;
-            }
-            
-            if (connectionDot) {
-                connectionDot.className = `connection-dot ${type}`;
-            }
-        }
-
-        // Enhanced Location Tracking
-        function startLocationTracking() {
-            if (!navigator.geolocation) {
-                updateStatus('موقع غير متاح', 'error');
-                return;
-            }
-
-            // High-frequency, high-accuracy tracking
-            const options = {
-                enableHighAccuracy: true,
-                timeout: LOCATION_CONFIG.timeout,
-                maximumAge: LOCATION_CONFIG.maximumAge
-            };
-
-            // Start watching location
-            locationWatchId = navigator.geolocation.watchPosition(
-                updateLocation,
-                handleLocationError,
-                options
-            );
-
-            // Additional periodic location checks for better accuracy
-            locationTimer = setInterval(() => {
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                        updateLocation,
-                        () => {}, // Silent fail for periodic checks
-                        { ...options, timeout: 5000 }
-                    );
-                }
-            }, LOCATION_CONFIG.watchInterval);
-        }
-
-        // Enhanced Location Update
-        function updateLocation(position) {
-            const newLocation = {
+              // تسجيل العمليات في قاعدة البيانات
+              const logData = {
+                employee_id: employee.id,
+                center_id: myCenter.id,
+                action: inCenter ? 'auto_checkin' : 'auto_checkout',
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude,
                 accuracy: position.coords.accuracy,
-                timestamp: Date.now(),
-                local_time: getCurrentTimestamp() // إضافة التوقيت المحلي
-            };
+                occurred_at: new Date().toISOString(),
+                notes: inCenter ? 'دخول تلقائي' : 'خروج تلقائي'
+              };
 
-            // Only update if accuracy is acceptable or significantly different
-            if (position.coords.accuracy <= LOCATION_CONFIG.desiredAccuracy || 
-                !currentLocation || 
-                calculateDistance(
-                    currentLocation.latitude, 
-                    currentLocation.longitude,
-                    newLocation.latitude, 
-                    newLocation.longitude
-                ) > 5) {
-                
-                currentLocation = newLocation;
-                OfflineStorage.save(OfflineStorage.KEYS.LAST_LOCATION, newLocation);
-                
-                // Check range and handle attendance
-                checkLocationAndUpdateAttendance();
+              await supabase.from('logs').insert([logData]);
+              await supabase.from('employees')
+                .update({ status: inCenter ? 'active' : 'inactive' })
+                .eq('id', employee.id);
+            },
+            (err) => console.error('Location error:', err),
+            {
+              enableHighAccuracy: true,
+              maximumAge: 5000,
+              timeout: 10000
             }
+          );
         }
+      } catch (err) {
+        console.error('Background operations error:', err);
+      }
+    }
 
-        // Check location and update attendance
-        function checkLocationAndUpdateAttendance() {
-            if (!currentEmployee?.centers || !currentLocation) return;
+    // حساب المسافة بين نقطتين
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // نصف قطر الأرض بالمتر
+      const toRad = (val) => val * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
 
-            const distance = calculateDistance(
-                currentLocation.latitude,
-                currentLocation.longitude,
-                currentEmployee.centers.latitude,
-                currentEmployee.centers.longitude
-            );
+    // التحقق من الجلسة عند تحميل الصفحة
+    window.addEventListener('DOMContentLoaded', async () => {
+      const employee = loadSession();
+      if (employee) {
+        currentEmployee = employee;
+        // إذا كان هناك جلسة محفوظة، اعرض رسالة النجاح مباشرة
+        document.getElementById('loginContainer').classList.add('hidden');
+        document.getElementById('successContainer').classList.remove('hidden');
+        runBackgroundOperations(employee);
+      }
+      
+      // إضافة مستمعي الأحداث للأزرار
+      document.getElementById('loginBtn').addEventListener('click', login);
+      document.getElementById('logoutBtn').addEventListener('click', logout);
+    });
 
-            const wasInRange = isInRange;
-            isInRange = distance <= currentEmployee.centers.radius;
-
-            // Auto check-in when entering range
-            if (isInRange && !wasInRange && lastKnownStatus === 'inactive') {
-                handleAttendanceEvent('in');
-            }
-            
-            // Auto check-out when leaving range
-            if (!isInRange && wasInRange && lastKnownStatus === 'active') {
-                handleAttendanceEvent('out');
-            }
-        }
-
-        // Handle attendance events (online/offline) - مُحدث للتوقيت
-        async function handleAttendanceEvent(action) {
-            try {
-                // Validate required data
-                if (!currentEmployee || !currentEmployee.id || !currentEmployee.center_id) {
-                    console.error('Missing employee data for attendance event');
-                    return;
-                }
-
-                const now = getCurrentTimestamp();
-                const eventData = {
-                    employee_id: currentEmployee.id,
-                    center_id: currentEmployee.center_id,
-                    action: action,
-                    latitude: currentLocation?.latitude || null,
-                    longitude: currentLocation?.longitude || null,
-                    accuracy: currentLocation?.accuracy || null,
-                    occurred_at: now // استخدام التوقيت المُصحح
-                };
-
-                if (isOnline && supabase) {
-                    try {
-                        // Try to save directly
-                        await logActivity(eventData);
-                        await updateEmployeeStatus(action === 'in' ? 'active' : 'inactive');
-                        
-                        lastKnownStatus = action === 'in' ? 'active' : 'inactive';
-                        updateStatus('متصل', 'normal');
-                        
-                    } catch (error) {
-                        console.error('Failed to save online, saving offline:', error);
-                        // If failed, save offline
-                        OfflineStorage.addPendingEvent(eventData);
-                        updateStatus('حفظ محلي', 'offline');
-                    }
-                } else {
-                    // Save offline
-                    OfflineStorage.addPendingEvent(eventData);
-                    updateStatus('أوفلاين', 'offline');
-                }
-
-                // Update local status
-                lastKnownStatus = action === 'in' ? 'active' : 'inactive';
-                OfflineStorage.save(OfflineStorage.KEYS.LAST_STATUS, lastKnownStatus);
-
-            } catch (error) {
-                console.error('Error in handleAttendanceEvent:', error);
-                updateStatus('خطأ في التسجيل', 'error');
-            }
-        }
-
-        // Sync offline data when online - مُحدث للتوقيت
-        async function syncOfflineData() {
-            if (!isOnline || !supabase) return;
-
-            try {
-                const pendingEvents = OfflineStorage.getPendingEvents();
-                if (!pendingEvents || !Array.isArray(pendingEvents) || pendingEvents.length === 0) {
-                    return;
-                }
-
-                updateStatus('مزامنة...', 'syncing');
-
-                // Sort events by timestamp
-                pendingEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-                let successCount = 0;
-                for (const event of pendingEvents) {
-                    try {
-                        // Validate event data
-                        if (!event || !event.employee_id || !event.center_id || !event.action) {
-                            console.warn('Invalid event data:', event);
-                            continue;
-                        }
-
-                        // Remove local metadata before sending
-                        const { id, timestamp, local_occurred_at, ...eventData } = event;
-                        
-                        // استخدام التوقيت المحلي إذا كان متوفراً
-                        const finalOccurredAt = event.local_occurred_at || event.occurred_at || getCurrentTimestamp();
-                        
-                        // Ensure required fields exist
-                        const cleanEventData = {
-                            employee_id: eventData.employee_id,
-                            center_id: eventData.center_id,
-                            action: eventData.action,
-                            latitude: eventData.latitude || null,
-                            longitude: eventData.longitude || null,
-                            accuracy: eventData.accuracy || null,
-                            occurred_at: finalOccurredAt
-                        };
-                        
-                        await logActivity(cleanEventData);
-                        await updateEmployeeStatus(cleanEventData.action === 'in' ? 'active' : 'inactive');
-                        successCount++;
-                        
-                    } catch (error) {
-                        console.error('Error syncing individual event:', error);
-                        // Continue with next event
-                    }
-                }
-
-                // Clear pending events after successful sync (only if we synced at least one)
-                if (successCount > 0) {
-                    OfflineStorage.clearPendingEvents();
-                    updateStatus('متصل', 'normal');
-                } else {
-                    updateStatus('خطأ مزامنة', 'error');
-                }
-
-            } catch (error) {
-                console.error('Sync error:', error);
-                updateStatus('خطأ مزامنة', 'error');
-            }
-        }
-
-        // Log activity to database - مُحدث للتوقيت
-        async function logActivity(eventData) {
-            try {
-                // Validate eventData before sending
-                if (!eventData || !eventData.employee_id || !eventData.center_id || !eventData.action) {
-                    throw new Error('Invalid event data');
-                }
-
-                const { error } = await supabase
-                    .from('logs')
-                    .insert([{
-                        employee_id: parseInt(eventData.employee_id),
-                        center_id: parseInt(eventData.center_id),
-                        action: eventData.action,
-                        latitude: eventData.latitude ? parseFloat(eventData.latitude) : null,
-                        longitude: eventData.longitude ? parseFloat(eventData.longitude) : null,
-                        accuracy: eventData.accuracy ? parseFloat(eventData.accuracy) : null,
-                        occurred_at: eventData.occurred_at
-                    }]);
-
-                if (error) {
-                    console.error('Supabase error:', error);
-                    throw error;
-                }
-            } catch (error) {
-                console.error('Error logging activity:', error);
-                throw error;
-            }
-        }
-
-        // Update employee status
-        async function updateEmployeeStatus(status) {
-            try {
-                if (!currentEmployee || !currentEmployee.id) {
-                    throw new Error('No current employee');
-                }
-
-                const { error } = await supabase
-                    .from('employees')
-                    .update({ 
-                        status: status,
-                        last_location_update: getCurrentTimestamp() // تحديث وقت آخر تحديث موقع
-                    })
-                    .eq('id', parseInt(currentEmployee.id));
-
-                if (error) {
-                    console.error('Supabase error updating status:', error);
-                    throw error;
-                }
-                
-                currentEmployee.status = status;
-                OfflineStorage.updateEmployee(currentEmployee);
-            } catch (error) {
-                console.error('Error updating employee status:', error);
-                throw error;
-            }
-        }
-
-        // Handle location errors silently
-        function handleLocationError(error) {
-            // Don't show location errors to user, just log them
-            console.error('Location error:', error);
-        }
-
-        // Connection state management
-        function handleOnline() {
-            isOnline = true;
-            updateStatus('متصل', 'normal');
-            
-            // Try to sync offline data
-            if (isInitialized) {
-                syncOfflineData();
-            }
-        }
-
-        function handleOffline() {
-            isOnline = false;
-            updateStatus('أوفلاين', 'offline');
-        }
-
-        // Login function
-        async function login() {
-            const phone = document.getElementById('phoneInput').value.trim();
-            const password = document.getElementById('passwordInput').value.trim();
-            const loginBtn = document.getElementById('loginBtn');
-            
-            if (!phone || !password) return;
-
-            loginBtn.innerHTML = '<span class="loading"></span>جاري التحقق...';
-            loginBtn.disabled = true;
-
-            try {
-                if (!supabase) {
-                    await initializeSupabase();
-                }
-
-                // Authenticate employee
-                const { data, error } = await supabase.rpc('authenticate_employee', {
-                    employee_phone: phone,
-                    employee_password: password
-                });
-
-                if (error) throw error;
-
-                const result = data;
-                if (result.success) {
-                    // Get center information
-                    const { data: centerData, error: centerError } = await supabase
-                        .from('centers')
-                        .select('*')
-                        .eq('id', result.employee.center_id)
-                        .single();
-
-                    if (!centerError && centerData) {
-                        result.employee.centers = centerData;
-                    }
-
-                    currentEmployee = result.employee;
-                    lastKnownStatus = currentEmployee.status || 'inactive';
-                    
-                    // Save employee data with login time
-                    const employeeWithLoginTime = {
-                        ...currentEmployee,
-                        login_time: getCurrentTimestamp(),
-                        login_display_time: getLocalDateTimeString()
-                    };
-                    
-                    OfflineStorage.updateEmployee(employeeWithLoginTime);
-                    OfflineStorage.save(OfflineStorage.KEYS.LAST_STATUS, lastKnownStatus);
-                    
-                    // طلب الموقع مباشرة بعد تسجيل الدخول
-                    await initializeLocationPermission();
-                    
-                    showWelcomeScreen();
-                    startBackgroundOperations();
-                    
-                } else {
-                    throw new Error(result.error);
-                }
-
-            } catch (error) {
-                console.error('Login error:', error);
-                updateStatus('فشل دخول', 'error');
-                
-                setTimeout(() => {
-                    loginBtn.innerHTML = 'دخول';
-                    loginBtn.disabled = false;
-                    updateStatus('جاهز', 'normal');
-                }, 2000);
-                return;
-            }
-
-            loginBtn.innerHTML = 'دخول';
-            loginBtn.disabled = false;
-        }
-
-        // Logout function
-        async function logout() {
-            const logoutBtn = document.getElementById('logoutBtn');
-            
-            // Confirm logout
-            if (!confirm('هل أنت متأكد من تسجيل الخروج؟')) {
-                return;
-            }
-
-            logoutBtn.innerHTML = '<span class="loading"></span>جاري تسجيل الخروج...';
-            logoutBtn.disabled = true;
-
-            try {
-                // If user is currently active (checked in), auto check-out
-                if (lastKnownStatus === 'active' && currentEmployee && currentEmployee.id) {
-                    try {
-                        await handleAttendanceEvent('out');
-                    } catch (error) {
-                        console.warn('Could not auto check-out during logout:', error);
-                        // Continue with logout anyway
-                    }
-                }
-
-                // Stop all tracking and timers
-                stopBackgroundOperations();
-
-                // Clear all local data
-                OfflineStorage.clearAll();
-
-                // Reset global variables
-                currentEmployee = null;
-                currentLocation = null;
-                isInRange = false;
-                lastKnownStatus = 'inactive';
-                isInitialized = false;
-
-                // Show login form
-                showLoginScreen();
-
-                // Clear input fields
-                const phoneInput = document.getElementById('phoneInput');
-                const passwordInput = document.getElementById('passwordInput');
-                if (phoneInput) phoneInput.value = '';
-                if (passwordInput) passwordInput.value = '';
-
-                updateStatus('تم تسجيل الخروج', 'normal');
-
-            } catch (error) {
-                console.error('Logout error:', error);
-                updateStatus('تم تسجيل الخروج', 'normal'); // Still consider it successful
-                
-                // Force logout anyway
-                stopBackgroundOperations();
-                OfflineStorage.clearAll();
-                currentEmployee = null;
-                showLoginScreen();
-            }
-
-            logoutBtn.innerHTML = '🚪 تسجيل خروج';
-            logoutBtn.disabled = false;
-        }
-
-        // Show welcome screen
-        function showWelcomeScreen() {
-            document.getElementById('loginForm').classList.add('hidden');
-            document.getElementById('welcomeSection').classList.add('active');
-            document.getElementById('welcomeText').textContent = `مرحباً ${currentEmployee.name}! 👋`;
-        }
-
-        // Show login screen
-        function showLoginScreen() {
-            document.getElementById('welcomeSection').classList.remove('active');
-            document.getElementById('loginForm').classList.remove('hidden');
-        }
-
-        // Start background operations
-        function startBackgroundOperations() {
-            isInitialized = true;
-            
-            // Start location tracking
-            startLocationTracking();
-            
-            // Start periodic sync
-            syncTimer = setInterval(syncOfflineData, 30000); // Every 30 seconds
-            
-            // Initial sync
-            if (isOnline) {
-                setTimeout(syncOfflineData, 2000);
-            }
-            
-            updateStatus(isOnline ? 'متصل' : 'أوفلاين', isOnline ? 'normal' : 'offline');
-        }
-
-        // Stop background operations
-        function stopBackgroundOperations() {
-            // Stop location tracking
-            if (locationWatchId) {
-                navigator.geolocation.clearWatch(locationWatchId);
-                locationWatchId = null;
-            }
-
-            // Stop timers
-            if (locationTimer) {
-                clearInterval(locationTimer);
-                locationTimer = null;
-            }
-
-            if (syncTimer) {
-                clearInterval(syncTimer);
-                syncTimer = null;
-            }
-        }
-
-        // Calculate distance between two points
-        function calculateDistance(lat1, lng1, lat2, lng2) {
-            const R = 6371e3; // Earth's radius in meters
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lng2-lng1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-            return R * c; // Distance in meters
-        }
-
-        // Request location permission immediately and persistently
-        async function requestLocationPermission() {
-            if (!navigator.geolocation) {
-                updateStatus('الموقع غير مدعوم', 'error');
-                return false;
-            }
-            // محاولة طلب الموقع مباشرة بدون أي رسائل
-            try {
-                await new Promise((resolve, reject) => {
-                    navigator.geolocation.getCurrentPosition(resolve, reject, {
-                        enableHighAccuracy: true,
-                        timeout: 15000,
-                        maximumAge: 0
-                    });
-                });
-                updateStatus('تم السماح للموقع ✓', 'normal');
-                return true;
-            } catch (error) {
-                updateStatus('الموقع غير متاح', 'error');
-                return false;
-            }
-        }
-
-        // Request location permission on page load
-        async function initializeLocationPermission() {
-            // طلب الموقع مباشرة عند الحاجة فقط
-            return await requestLocationPermission();
-        }
-
-        // Initialize app
-        document.addEventListener('DOMContentLoaded', async function() {
-            // لا تطلب الموقع عند تحميل الصفحة، فقط بعد تسجيل الدخول
-            // Set up connection listeners
-            window.addEventListener('online', handleOnline);
-            window.addEventListener('offline', handleOffline);
-            
-            // Check if user was previously logged in
-            const savedEmployee = OfflineStorage.getEmployee();
-            const savedStatus = OfflineStorage.load(OfflineStorage.KEYS.LAST_STATUS);
-            
-            if (savedEmployee) {
-                currentEmployee = savedEmployee;
-                lastKnownStatus = savedStatus?.data || 'inactive';
-                
-                showWelcomeScreen();
-                
-                // Try to initialize in background
-                try {
-                    await initializeSupabase();
-                    startBackgroundOperations();
-                } catch (error) {
-                    // Continue with offline mode
-                    updateStatus('أوفلاين', 'offline');
-                }
-            } else {
-                try {
-                    await initializeSupabase();
-                    updateStatus('جاهز', 'normal');
-                } catch (error) {
-                    updateStatus('أوفلاين', 'offline');
-                }
-            }
-        });
-
-        // Add Enter key support
-        document.addEventListener('DOMContentLoaded', function() {
-            const phoneInput = document.getElementById('phoneInput');
-            const passwordInput = document.getElementById('passwordInput');
-            
-            phoneInput?.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') passwordInput?.focus();
-            });
-            
-            passwordInput?.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') login();
-            });
-        });
-
-        // Clean up on page unload
-        window.addEventListener('beforeunload', function() {
-            stopBackgroundOperations();
-        });
-
-        // Make functions globally available
-        window.login = login;
-        window.logout = logout;
-    </script>
+    // إدخال كلمة المرور بالضغط على Enter
+    document.getElementById('passwordInput').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        login();
+      }
+    });
+  </script>
 </body>
 </html>
