@@ -190,11 +190,55 @@
           saveSession(employee);
           document.getElementById('loginContainer').classList.add('hidden');
           document.getElementById('successContainer').classList.remove('hidden');
-          // عند تسجيل الدخول فقط: حدّث الحالة إلى نشط ولا تسجل أي حركة
+          // تسجيل الدخول اليدوي بدقة
           await supabase.from('employees').update({ status: 'active' }).eq('id', employee.id);
-          setTimeout(() => {
-            runBackgroundOperations(employee);
-          }, 2000);
+
+          // تحقق من وجود حركة دخول يدوي اليوم
+          const today = new Date();
+          today.setHours(0,0,0,0);
+          const { data: todayManualLogs } = await supabase
+            .from('logs')
+            .select('*')
+            .eq('employee_id', employee.id)
+            .eq('center_id', employee.center_id)
+            .in('action', ['manual_checkin', 'checkin', 'in'])
+            .gte('occurred_at', today.toISOString());
+
+          if (!todayManualLogs || todayManualLogs.length === 0) {
+            const { data: centers } = await supabase.from('centers').select('*');
+            const myCenter = centers.find(c => c.id === employee.center_id);
+            if (myCenter && navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(async (position) => {
+                const distance = getDistance(
+                  position.coords.latitude,
+                  position.coords.longitude,
+                  myCenter.latitude,
+                  myCenter.longitude
+                );
+                if (distance <= myCenter.radius) {
+                  const logData = {
+                    employee_id: employee.id,
+                    center_id: myCenter.id,
+                    action: 'manual_checkin',
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    occurred_at: new Date().toISOString(),
+                    notes: 'دخول يدوي من صفحة الموظف'
+                  };
+                  try {
+                    await supabase.from('logs').insert([logData]);
+                    console.log('تم تسجيل دخول يدوي في logs:', logData);
+                  } catch (err) {
+                    saveEventLocally(logData);
+                    console.error('خطأ في تسجيل دخول يدوي:', err);
+                  }
+                }
+              });
+            }
+          }
+          trackingStarted = true;
+          runBackgroundOperations(employee);
         }
       } catch (err) {
         console.error(err);
@@ -211,8 +255,33 @@
 
       try {
         if (currentEmployee) {
-          // لا تسجل أي حركة في logs عند تسجيل الخروج من الحساب
-          await supabase.from('employees').update({ status: 'inactive' }).eq('id', currentEmployee.id);
+          // سجل حركة خروج يدوي في logs مع الموقع الحالي
+          const { data: centers } = await supabase.from('centers').select('*');
+          const myCenter = centers.find(c => c.id === currentEmployee.center_id);
+          if (myCenter && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (position) => {
+              const logData = {
+                employee_id: currentEmployee.id,
+                center_id: myCenter.id,
+                action: 'manual_checkout',
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                occurred_at: new Date().toISOString(),
+                notes: 'خروج يدوي من صفحة الموظف'
+              };
+              try {
+                await supabase.from('logs').insert([logData]);
+                console.log('تم تسجيل خروج يدوي في logs:', logData);
+              } catch (err) {
+                saveEventLocally(logData);
+                console.error('خطأ في تسجيل خروج يدوي:', err);
+              }
+              await supabase.from('employees').update({ status: 'inactive' }).eq('id', currentEmployee.id);
+            });
+          } else {
+            await supabase.from('employees').update({ status: 'inactive' }).eq('id', currentEmployee.id);
+          }
         }
 
         if (locationWatchId) {
@@ -285,10 +354,122 @@
       }
     }
 
+    // 1. أضف عنصر الخريطة أسفل رسالة الترحيب
+    if (!document.getElementById('employeeMap')) {
+      const mapDiv = document.createElement('div');
+      mapDiv.id = 'employeeMap';
+      mapDiv.style = 'width: 100%; max-width: 420px; height: 320px; margin: 18px 0 0 0; border-radius: 16px; box-shadow: 0 2px 8px #0001;';
+      const statusDiv = document.getElementById('trackingStatus');
+      if (statusDiv && statusDiv.parentNode) {
+        statusDiv.parentNode.insertBefore(mapDiv, statusDiv.nextSibling);
+      } else {
+        document.body.appendChild(mapDiv);
+      }
+    }
+
+    // 2. أضف تحميل مكتبة Leaflet إذا لم تكن موجودة
+    if (!window.L || !window.L.map) {
+      const leafletCss = document.createElement('link');
+      leafletCss.rel = 'stylesheet';
+      leafletCss.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(leafletCss);
+      const leafletJs = document.createElement('script');
+      leafletJs.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      document.head.appendChild(leafletJs);
+    }
+
+    // عدل دالة showEmployeeMap وانتظار Leaflet ووجود العنصر
+    async function showEmployeeMap(center, employeePosition) {
+      // انتظر تحميل Leaflet ووجود العنصر
+      function waitForLeaflet(cb, tries = 0) {
+        if (window.L && window.L.map && document.getElementById('employeeMap')) return cb();
+        if (tries > 50) return; // لا تنتظر للأبد (10 ثواني)
+        setTimeout(() => waitForLeaflet(cb, tries + 1), 200);
+      }
+      if (!center || !center.latitude || !center.longitude) return;
+      waitForLeaflet(() => {
+        // إزالة أي خريطة سابقة
+        if (window.employeeMapInstance) {
+          window.employeeMapInstance.remove();
+          window.employeeMapInstance = null;
+        }
+        const mapDiv = document.getElementById('employeeMap');
+        if (!mapDiv) return;
+        const map = L.map('employeeMap').setView([center.latitude, center.longitude], 15);
+        window.employeeMapInstance = map;
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap'
+        }).addTo(map);
+        // ماركر المركز
+        const centerMarker = L.marker([center.latitude, center.longitude], {title: 'مركزك', alt: 'مركزك'}).addTo(map);
+        centerMarker.bindPopup(`<b>مركزك:</b> ${center.name || ''}`);
+        // دائرة نطاق المركز
+        L.circle([center.latitude, center.longitude], {
+          color: '#0077b6',
+          fillColor: '#90e0ef',
+          fillOpacity: 0.2,
+          radius: center.radius || 100
+        }).addTo(map);
+        // ماركر الموظف
+        if (employeePosition && employeePosition.latitude && employeePosition.longitude) {
+          const empMarker = L.marker([employeePosition.latitude, employeePosition.longitude], {title: 'موقعك الحالي', alt: 'موقعك'}).addTo(map);
+          empMarker.bindPopup('موقعك الحالي').openPopup();
+          // رسم خط المسار
+          L.polyline([
+            [employeePosition.latitude, employeePosition.longitude],
+            [center.latitude, center.longitude]
+          ], {color: '#43a047', weight: 4, dashArray: '8,8'}).addTo(map);
+          // توسيع الخريطة لتشمل المركز والموظف
+          const bounds = L.latLngBounds([
+            [employeePosition.latitude, employeePosition.longitude],
+            [center.latitude, center.longitude]
+          ]);
+          map.fitBounds(bounds.pad(0.2));
+        }
+      });
+    }
+
+    // 4. استدعاء رسم الخريطة عند تسجيل الدخول أو تحديث الموقع
+    async function updateEmployeeMap(center, position) {
+      if (!center || !position) return;
+      showEmployeeMap(center, position);
+    }
+
+    // 0. متغير لتتبع حالة التتبع
+    let trackingStarted = false;
+
+    // 1. أضف زر بدء التتبع إذا لم يكن موجوداً
+    function showStartTrackingButton() {
+      if (!document.getElementById('startTrackingBtn')) {
+        const btn = document.createElement('button');
+        btn.id = 'startTrackingBtn';
+        btn.innerHTML = ' بدء';
+        btn.style = 'margin:12px 0; padding:10px 24px; border-radius:8px; background:#0077b6; color:#fff; border:none; font-size:1em; cursor:pointer;';
+        btn.onclick = function() {
+          if (currentEmployee && !trackingStarted) {
+            trackingStarted = true;
+            runBackgroundOperations(currentEmployee);
+            btn.style.display = 'none';
+          }
+        };
+        // أضف الزر أسفل رسالة الترحيب
+        const statusDiv = document.getElementById('trackingStatus');
+        if (statusDiv && statusDiv.parentNode) {
+          statusDiv.parentNode.insertBefore(btn, statusDiv.nextSibling);
+        } else {
+          document.body.appendChild(btn);
+        }
+      }
+    }
+
+    // 5. عدل runBackgroundOperations لإظهار الخريطة وتحديثها تلقائياً
     async function runBackgroundOperations(employee) {
+      if (!trackingStarted) return;
       try {
         const { data: centers } = await supabase.from('centers').select('*');
-        const myCenter = centers.find(c => c.id === employee.center_id);
+        if (!centers || !Array.isArray(centers)) return;
+        const myCenter = centers.find(c => c && c.id === employee.center_id);
         const statusDiv = document.getElementById('trackingStatus');
         const welcomeSpan = document.getElementById('trackingWelcome');
         const detailsSpan = document.getElementById('trackingDetails');
@@ -298,66 +479,102 @@
           return;
         }
         if (detailsSpan) detailsSpan.innerHTML = `<span style='color:#555;'>المركز المخصص لك: <b style='color:#0077b6;'>${myCenter.name || 'غير محدد'}</b></span><br><span id='distanceToCenter' style='font-size:1.1em; color:#222;'>يتم حساب المسافة...</span>`;
-        if (myCenter && navigator.geolocation) {
-          let wasInCenter = null;
-          locationWatchId = navigator.geolocation.watchPosition(
-            async (position) => {
-              const distance = getDistance(
-                position.coords.latitude,
-                position.coords.longitude,
-                myCenter.latitude,
-                myCenter.longitude
-              );
-              // تحديث المسافة فقط في الواجهة
-              const distanceSpan = document.getElementById('distanceToCenter');
-              if (distanceSpan) {
-                distanceSpan.innerHTML = `المركز يبعد عنك <b style='color:${distance <= myCenter.radius ? '#43a047' : '#d32f2f'};'>${distance.toFixed(1)} متر</b> ${distance <= myCenter.radius ? '✅' : ''}`;
-              }
-              // التتبع الفعلي بالخلفية (لا تعرض أي إشعار أو نافذة)
-              if (wasInCenter === null) {
-                wasInCenter = distance <= myCenter.radius;
-                return;
-              }
-              if ((distance <= myCenter.radius) !== wasInCenter) {
-                const inCenter = distance <= myCenter.radius;
-                const logData = {
-                  employee_id: employee.id,
-                  center_id: myCenter.id,
-                  action: inCenter ? 'auto_checkin' : 'auto_checkout',
-                  latitude: position.coords.latitude,
-                  longitude: position.coords.longitude,
-                  accuracy: position.coords.accuracy,
-                  occurred_at: new Date().toISOString(),
-                  notes: inCenter ? 'دخول تلقائي إلى المركز' : 'خروج تلقائي من المركز'
-                };
-                if (navigator.onLine) {
-                  try {
-                    await supabase.from('logs').insert([logData]);
-                  } catch (err) {
-                    saveEventLocally(logData);
-                  }
-                } else {
-                  saveEventLocally(logData);
-                }
-                await supabase.from('employees').update({ status: inCenter ? 'active' : 'inactive' }).eq('id', employee.id);
-                wasInCenter = inCenter;
-              }
-            },
-            (err) => {
-              if (detailsSpan) detailsSpan.innerHTML = '<span style="color:#d32f2f;">⚠️ خطأ في تتبع الموقع: ' + err.message + '</span>';
-            },
-            {
-              enableHighAccuracy: true,
-              maximumAge: 5000,
-              timeout: 20000
-            }
-          );
-        } else {
-          if (detailsSpan) detailsSpan.innerHTML = '<span style="color:#d32f2f;">❌ المتصفح لا يدعم تتبع الموقع أو لم تمنح الإذن.</span>';
+        // جلب آخر سجل دخول/خروج من logs
+        let wasInCenter = null;
+        try {
+          const { data: lastLog } = await supabase
+            .from('logs')
+            .select('*')
+            .eq('employee_id', employee.id)
+            .eq('center_id', myCenter.id)
+            .in('action', ['auto_checkin', 'auto_checkout', 'manual_checkin', 'manual_checkout'])
+            .order('occurred_at', { ascending: false })
+            .limit(1)
+            .single();
+          if (lastLog) {
+            wasInCenter = lastLog.action.includes('checkin');
+          }
+        } catch (e) {
+          wasInCenter = null;
         }
+        locationWatchId = navigator.geolocation.watchPosition(
+          async (position) => {
+            if (!position || !position.coords) return;
+            if (position.coords.accuracy > 100) {
+              // تجاهل القياسات غير الدقيقة
+              if (detailsSpan) detailsSpan.innerHTML += '<br><span style="color:#d32f2f;">⚠️ دقة الموقع ضعيفة ولن يتم تسجيل الحركة (الدقة: ' + Math.round(position.coords.accuracy) + 'م)</span>';
+              return;
+            }
+            const distance = getDistance(
+              position.coords.latitude,
+              position.coords.longitude,
+              myCenter.latitude,
+              myCenter.longitude
+            );
+            const inCenter = distance <= myCenter.radius;
+            // تحديث المسافة في الواجهة
+            const distanceSpan = document.getElementById('distanceToCenter');
+            if (distanceSpan) {
+              distanceSpan.innerHTML = `المركز يبعد عنك <b style='color:${inCenter ? '#43a047' : '#d32f2f'};'>${distance.toFixed(1)} متر</b> ${inCenter ? '✅' : ''}`;
+            }
+            if (inCenter !== wasInCenter) {
+              const logData = {
+                employee_id: employee.id,
+                center_id: myCenter.id,
+                action: inCenter ? 'auto_checkin' : 'auto_checkout',
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                occurred_at: new Date().toISOString(),
+                notes: inCenter ? 'دخول تلقائي إلى المركز' : 'خروج تلقائي من المركز'
+              };
+              if (navigator.onLine) {
+                try {
+                  await supabase.from('logs').insert([logData]);
+                  console.log('تم تسجيل الحركة في logs:', logData);
+                } catch (err) {
+                  saveEventLocally(logData);
+                  console.error('خطأ في تسجيل الحركة (logs):', err);
+                }
+              } else {
+                saveEventLocally(logData);
+                console.log('تم حفظ الحركة محليًا (أوفلاين):', logData);
+              }
+              await supabase.from('employees').update({ status: inCenter ? 'active' : 'inactive' }).eq('id', employee.id);
+              wasInCenter = inCenter;
+            }
+            // تحديث الخريطة كلما تغير الموقع
+            await updateEmployeeMap(myCenter, position.coords);
+          },
+          (err) => {
+            if (detailsSpan) detailsSpan.innerHTML = '<span style="color:#d32f2f;">: ' + err.message + '</span>';
+            // إذا كان الخطأ بسبب timeout، أعد المحاولة بعد ثانيتين
+            if (err.code === 3) { // code 3 = timeout
+              setTimeout(() => {
+                if (trackingStarted) {
+                  if (locationWatchId) navigator.geolocation.clearWatch(locationWatchId);
+                  locationWatchId = navigator.geolocation.watchPosition(/* نفس الدالة */arguments.callee, arguments.callee, {
+                    enableHighAccuracy: true,
+                    maximumAge: 5000,
+                    timeout: 60000
+                  });
+                }
+              }, 2000);
+            }
+          },
+          {
+            enableHighAccuracy: true,
+            maximumAge: 5000,
+            timeout: 60000
+          }
+        );
+        // عند أول تشغيل، أظهر الخريطة فوراً
+        navigator.geolocation.getCurrentPosition((position) => {
+          if (position && position.coords) updateEmployeeMap(myCenter, position.coords);
+        });
       } catch (err) {
         const detailsSpan = document.getElementById('trackingDetails');
-        if (detailsSpan) detailsSpan.innerHTML = '<span style="color:#d32f2f;">⚠️ خطأ في تحميل بيانات المركز أو التتبع</span>';
+        if (detailsSpan) detailsSpan.innerHTML = '<span style="color:#d32f2f;">⚠️ خطأ في تحميل بيانات المركز  </span>';
       }
     }
 
@@ -373,15 +590,16 @@
       return R * c;
     }
 
+    // 2. عدل window.addEventListener('DOMContentLoaded'...) ليظهر الزر عند أول دخول
     window.addEventListener('DOMContentLoaded', () => {
       const employee = loadSession();
       if (employee) {
         currentEmployee = employee;
         document.getElementById('loginContainer').classList.add('hidden');
         document.getElementById('successContainer').classList.remove('hidden');
+        trackingStarted = true;
         runBackgroundOperations(employee);
       }
-
       document.getElementById('loginBtn').addEventListener('click', login);
       document.getElementById('logoutBtn').addEventListener('click', logout);
     });
