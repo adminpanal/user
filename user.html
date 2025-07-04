@@ -266,9 +266,23 @@
     if (!document.getElementById('trackingStatus')) {
       const statusDiv = document.createElement('div');
       statusDiv.id = 'trackingStatus';
-      statusDiv.style = 'color: #222; font-weight: bold; margin: 10px 0; background: #e6f7ff; padding: 18px; border-radius: 14px; box-shadow: 0 2px 8px #0001; font-size: 1.2em; text-align: right; direction: rtl; letter-spacing: 0.5px;';
+      statusDiv.style = 'color: #222; font-weight: bold; margin: 18px 0 0 0; background: #e6f7ff; padding: 16px 20px; border-radius: 14px; box-shadow: 0 2px 8px #0001; font-size: 1.1em; text-align: right; direction: rtl; letter-spacing: 0.5px; max-width: 380px; width: 100%; display: block;';
       statusDiv.innerHTML = '<span id="trackingWelcome">مرحباً 👋</span><br><span id="trackingDetails">يرجى ادخال رقم هاتفك وكلمة المرور الخاصة بك</span>';
-      document.body.insertBefore(statusDiv, document.body.firstChild.nextSibling);
+      // ضعها أسفل كارد تسجيل الدخول مباشرة وبنفس المحاذاة
+      const loginCard = document.querySelector('#loginContainer, .login-card, .card, .auth-card');
+      if (loginCard && loginCard.parentNode) {
+        // التفاف في ديف لتوسيط العنصرين معًا
+        let wrapper = loginCard.parentNode;
+        // إذا لم يكن الحاوي flex عمودي، اجعله كذلك
+        if (window.getComputedStyle(wrapper).display !== 'flex' || window.getComputedStyle(wrapper).flexDirection !== 'column') {
+          wrapper.style.display = 'flex';
+          wrapper.style.flexDirection = 'column';
+          wrapper.style.alignItems = 'center';
+        }
+        wrapper.insertBefore(statusDiv, loginCard.nextSibling);
+      } else {
+        document.body.appendChild(statusDiv);
+      }
     }
 
     async function runBackgroundOperations(employee) {
