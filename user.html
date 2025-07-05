@@ -395,6 +395,11 @@
     const mapboxToken = 'pk.eyJ1IjoiYW1lZXI3ZWx3YXMiLCJhIjoiY21iODAxaTFyMGFsajJqc2J2dGtvY2pmdSJ9.MNY-7y2onlfAnM0PUhNt8g';
 
     // عدل دالة showEmployeeMap لاستخدام Mapbox
+    // متغيرات لتخزين الماركر والخط
+    window.employeeMapInstance = window.employeeMapInstance || null;
+    window.employeeMarker = window.employeeMarker || null;
+    window.employeeRoute = window.employeeRoute || null;
+
     async function showEmployeeMap(center, employeePosition) {
       function waitForMapbox(cb, tries = 0) {
         if (window.mapboxgl && mapboxgl.Map && document.getElementById('employeeMap')) return cb();
@@ -403,92 +408,109 @@
       }
       if (!center || !center.latitude || !center.longitude) return;
       waitForMapbox(() => {
-        // إزالة أي خريطة سابقة
-        if (window.employeeMapInstance) {
-          window.employeeMapInstance.remove();
-          window.employeeMapInstance = null;
-        }
         const mapDiv = document.getElementById('employeeMap');
         if (!mapDiv) return;
-        mapDiv.innerHTML = '';
         mapboxgl.accessToken = mapboxToken;
-        const map = new mapboxgl.Map({
-          container: 'employeeMap',
-          style: 'mapbox://styles/mapbox/streets-v12',
-          center: [center.longitude, center.latitude],
-          zoom: 15
-        });
-        window.employeeMapInstance = map;
-        // ماركر المركز
-        const centerMarker = new mapboxgl.Marker({color: '#0077b6'})
-          .setLngLat([center.longitude, center.latitude])
-          .setPopup(new mapboxgl.Popup().setHTML(`<div style="direction:rtl;text-align:right;font-family:'Noto Naskh Arabic','Amiri','Tahoma',Arial,sans-serif;font-size:1.1em;"><b>مركزك:</b> ${center.name || ''}</div>`));
-        centerMarker.addTo(map);
-        // دائرة نطاق المركز (باستخدام مصدر/طبقة دائرية)
-        map.on('load', () => {
-          map.addSource('center-circle', {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: [center.longitude, center.latitude] }
-            }
+        // أنشئ الخريطة مرة واحدة فقط
+        if (!window.employeeMapInstance) {
+          window.employeeMapInstance = new mapboxgl.Map({
+            container: 'employeeMap',
+            style: 'mapbox://styles/mapbox/streets-v12',
+            center: [center.longitude, center.latitude],
+            zoom: 15
           });
-          map.addLayer({
-            id: 'center-circle-layer',
-            type: 'circle',
-            source: 'center-circle',
-            paint: {
-              'circle-radius': {
-                stops: [
-                  [0, 0],
-                  [20, center.radius / 0.075] // تقريب لنصف القطر بالبكسل
-                ],
-                base: 2
-              },
-              'circle-color': '#90e0ef',
-              'circle-opacity': 0.2,
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#0077b6'
-            }
-          });
-        });
-        // ماركر الموظف
-        if (employeePosition && employeePosition.latitude && employeePosition.longitude) {
-          const empMarker = new mapboxgl.Marker({color: '#43a047'})
-            .setLngLat([employeePosition.longitude, employeePosition.latitude])
-            .setPopup(new mapboxgl.Popup().setHTML(`<div style="direction:rtl;text-align:right;font-family:'Noto Naskh Arabic','Amiri','Tahoma',Arial,sans-serif;font-size:1.1em;">موقعك الحالي</div>`));
-          empMarker.addTo(map);
-          // رسم خط بين الموظف والمركز
-          map.on('load', () => {
-            map.addSource('route', {
+          // ماركر المركز
+          const centerMarker = new mapboxgl.Marker({color: '#0077b6'})
+            .setLngLat([center.longitude, center.latitude])
+            .setPopup(new mapboxgl.Popup().setHTML(`<div style="direction:rtl;text-align:right;font-family:'Noto Naskh Arabic','Amiri','Tahoma',Arial,sans-serif;font-size:1.1em;"><b>مركزك:</b> ${center.name || ''}</div>`));
+          centerMarker.addTo(window.employeeMapInstance);
+          // دائرة نطاق المركز
+          window.employeeMapInstance.on('load', () => {
+            window.employeeMapInstance.addSource('center-circle', {
               type: 'geojson',
               data: {
                 type: 'Feature',
-                geometry: {
-                  type: 'LineString',
-                  coordinates: [
-                    [employeePosition.longitude, employeePosition.latitude],
-                    [center.longitude, center.latitude]
-                  ]
-                }
+                geometry: { type: 'Point', coordinates: [center.longitude, center.latitude] }
               }
             });
-            map.addLayer({
-              id: 'route-layer',
-              type: 'line',
-              source: 'route',
+            window.employeeMapInstance.addLayer({
+              id: 'center-circle-layer',
+              type: 'circle',
+              source: 'center-circle',
               paint: {
-                'line-color': '#43a047',
-                'line-width': 4,
-                'line-dasharray': [8, 8]
+                'circle-radius': {
+                  stops: [
+                    [0, 0],
+                    [20, center.radius / 0.075]
+                  ],
+                  base: 2
+                },
+                'circle-color': '#90e0ef',
+                'circle-opacity': 0.2,
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#0077b6'
               }
             });
-            // توسيع الخريطة لتشمل المركز والموظف
+          });
+        }
+        // تحديث ماركر الموظف فقط
+        if (employeePosition && employeePosition.latitude && employeePosition.longitude) {
+          // إذا كان الماركر موجود، حركه فقط
+          if (window.employeeMarker) {
+            window.employeeMarker.setLngLat([employeePosition.longitude, employeePosition.latitude]);
+          } else {
+            window.employeeMarker = new mapboxgl.Marker({color: '#43a047'})
+              .setLngLat([employeePosition.longitude, employeePosition.latitude])
+              .setPopup(new mapboxgl.Popup().setHTML(`<div style="direction:rtl;text-align:right;font-family:'Noto Naskh Arabic','Amiri','Tahoma',Arial,sans-serif;font-size:1.1em;">موقعك الحالي</div>`));
+            window.employeeMarker.addTo(window.employeeMapInstance);
+          }
+          // تحديث الخط
+          if (window.employeeMapInstance.getSource('route')) {
+            window.employeeMapInstance.getSource('route').setData({
+              type: 'Feature',
+              geometry: {
+                type: 'LineString',
+                coordinates: [
+                  [employeePosition.longitude, employeePosition.latitude],
+                  [center.longitude, center.latitude]
+                ]
+              }
+            });
+          } else {
+            window.employeeMapInstance.on('load', () => {
+              window.employeeMapInstance.addSource('route', {
+                type: 'geojson',
+                data: {
+                  type: 'Feature',
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: [
+                      [employeePosition.longitude, employeePosition.latitude],
+                      [center.longitude, center.latitude]
+                    ]
+                  }
+                }
+              });
+              window.employeeMapInstance.addLayer({
+                id: 'route-layer',
+                type: 'line',
+                source: 'route',
+                paint: {
+                  'line-color': '#43a047',
+                  'line-width': 4,
+                  'line-dasharray': [8, 8]
+                }
+              });
+            });
+          }
+          // توسيع الخريطة لتشمل المركز والموظف مرة واحدة فقط عند أول تحديث
+          if (!window._fitBoundsDone) {
             const bounds = new mapboxgl.LngLatBounds();
             bounds.extend([employeePosition.longitude, employeePosition.latitude]);
             bounds.extend([center.longitude, center.latitude]);
-            map.fitBounds(bounds, {padding: 40});
-          });
+            window.employeeMapInstance.fitBounds(bounds, {padding: 40});
+            window._fitBoundsDone = true;
+          }
         }
       });
     }
@@ -565,7 +587,7 @@
             if (!position || !position.coords) return;
             // لم يعد هناك شرط تجاهل الحركة بسبب الدقة
             if (position.coords.accuracy > 100) {
-              if (detailsSpan) detailsSpan.innerHTML += '<br><span style="color:#d32f2f;">⚠️ دقة الموقع ضعيفة، لكن سيتم تسجيل الحركة (الدقة: ' + Math.round(position.coords.accuracy) + 'م)</span>';
+              if (detailsSpan) detailsSpan.innerHTML += '<br><span style="color:#d32f2f;">⚠️ دقة الموقع ضعيفة' + Math.round(position.coords.accuracy) + 'م)</span>';
             }
             const distance = getDistance(
               position.coords.latitude,
