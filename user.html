@@ -122,7 +122,7 @@
   </div>
 
   <div class="container hidden" id="successContainer">
-    <div class="success-message">✅ تم تسجيل الدخول بنجاح</div>
+    <div class="success-message">✅تم تسجيل الدخول يرجى ابقاء الصفحة مفتوحة</div>
     <button id="logoutBtn" style="background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); margin-top: 20px;">
       تسجيل خروج
     </button>
@@ -426,31 +426,35 @@
           centerMarker.addTo(window.employeeMapInstance);
           // دائرة نطاق المركز
           window.employeeMapInstance.on('load', () => {
-            window.employeeMapInstance.addSource('center-circle', {
-              type: 'geojson',
-              data: {
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [center.longitude, center.latitude] }
-              }
-            });
-            window.employeeMapInstance.addLayer({
-              id: 'center-circle-layer',
-              type: 'circle',
-              source: 'center-circle',
-              paint: {
-                'circle-radius': {
-                  stops: [
-                    [0, 0],
-                    [20, center.radius / 0.075]
-                  ],
-                  base: 2
-                },
-                'circle-color': '#90e0ef',
-                'circle-opacity': 0.2,
-                'circle-stroke-width': 2,
-                'circle-stroke-color': '#0077b6'
-              }
-            });
+            if (!window.employeeMapInstance.getSource('center-circle')) {
+              window.employeeMapInstance.addSource('center-circle', {
+                type: 'geojson',
+                data: {
+                  type: 'Feature',
+                  geometry: { type: 'Point', coordinates: [center.longitude, center.latitude] }
+                }
+              });
+            }
+            if (!window.employeeMapInstance.getLayer('center-circle-layer')) {
+              window.employeeMapInstance.addLayer({
+                id: 'center-circle-layer',
+                type: 'circle',
+                source: 'center-circle',
+                paint: {
+                  'circle-radius': {
+                    stops: [
+                      [0, 0],
+                      [20, center.radius / 0.075]
+                    ],
+                    base: 2
+                  },
+                  'circle-color': '#90e0ef',
+                  'circle-opacity': 0.2,
+                  'circle-stroke-width': 2,
+                  'circle-stroke-color': '#0077b6'
+                }
+              });
+            }
           });
         }
         // تحديث ماركر الموظف فقط
@@ -478,29 +482,33 @@
             });
           } else {
             window.employeeMapInstance.on('load', () => {
-              window.employeeMapInstance.addSource('route', {
-                type: 'geojson',
-                data: {
-                  type: 'Feature',
-                  geometry: {
-                    type: 'LineString',
-                    coordinates: [
-                      [employeePosition.longitude, employeePosition.latitude],
-                      [center.longitude, center.latitude]
-                    ]
+              if (!window.employeeMapInstance.getSource('route')) {
+                window.employeeMapInstance.addSource('route', {
+                  type: 'geojson',
+                  data: {
+                    type: 'Feature',
+                    geometry: {
+                      type: 'LineString',
+                      coordinates: [
+                        [employeePosition.longitude, employeePosition.latitude],
+                        [center.longitude, center.latitude]
+                      ]
+                    }
                   }
-                }
-              });
-              window.employeeMapInstance.addLayer({
-                id: 'route-layer',
-                type: 'line',
-                source: 'route',
-                paint: {
-                  'line-color': '#43a047',
-                  'line-width': 4,
-                  'line-dasharray': [8, 8]
-                }
-              });
+                });
+              }
+              if (!window.employeeMapInstance.getLayer('route-layer')) {
+                window.employeeMapInstance.addLayer({
+                  id: 'route-layer',
+                  type: 'line',
+                  source: 'route',
+                  paint: {
+                    'line-color': '#43a047',
+                    'line-width': 4,
+                    'line-dasharray': [8, 8]
+                  }
+                });
+              }
             });
           }
           // توسيع الخريطة لتشمل المركز والموظف مرة واحدة فقط عند أول تحديث
