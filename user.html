@@ -367,27 +367,42 @@
       }
     }
 
-    // 2. أضف تحميل مكتبة Leaflet إذا لم تكن موجودة
-    if (!window.L || !window.L.map) {
-      const leafletCss = document.createElement('link');
-      leafletCss.rel = 'stylesheet';
-      leafletCss.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-      document.head.appendChild(leafletCss);
-      const leafletJs = document.createElement('script');
-      leafletJs.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-      document.head.appendChild(leafletJs);
+    // 2. أضف تحميل مكتبة Mapbox GL JS إذا لم تكن موجودة
+    if (!window.mapboxgl) {
+      const mapboxCss = document.createElement('link');
+      mapboxCss.rel = 'stylesheet';
+      mapboxCss.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
+      document.head.appendChild(mapboxCss);
+      const mapboxJs = document.createElement('script');
+      mapboxJs.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+      document.head.appendChild(mapboxJs);
     }
+    // تحميل RTL plugin عند توفر mapboxgl
+    function loadMapboxRTLPlugin() {
+      if (window.mapboxgl && mapboxgl.setRTLTextPlugin) {
+        mapboxgl.setRTLTextPlugin(
+          'https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.2.3/mapbox-gl-rtl-text.js',
+          null,
+          true // lazy
+        );
+      } else {
+        setTimeout(loadMapboxRTLPlugin, 200);
+      }
+    }
+    loadMapboxRTLPlugin();
 
-    // عدل دالة showEmployeeMap وانتظار Leaflet ووجود العنصر
+    // إعداد مفتاح Mapbox
+    const mapboxToken = 'pk.eyJ1IjoiYW1lZXI3ZWx3YXMiLCJhIjoiY21iODAxaTFyMGFsajJqc2J2dGtvY2pmdSJ9.MNY-7y2onlfAnM0PUhNt8g';
+
+    // عدل دالة showEmployeeMap لاستخدام Mapbox
     async function showEmployeeMap(center, employeePosition) {
-      // انتظر تحميل Leaflet ووجود العنصر
-      function waitForLeaflet(cb, tries = 0) {
-        if (window.L && window.L.map && document.getElementById('employeeMap')) return cb();
-        if (tries > 50) return; // لا تنتظر للأبد (10 ثواني)
-        setTimeout(() => waitForLeaflet(cb, tries + 1), 200);
+      function waitForMapbox(cb, tries = 0) {
+        if (window.mapboxgl && mapboxgl.Map && document.getElementById('employeeMap')) return cb();
+        if (tries > 50) return;
+        setTimeout(() => waitForMapbox(cb, tries + 1), 200);
       }
       if (!center || !center.latitude || !center.longitude) return;
-      waitForLeaflet(() => {
+      waitForMapbox(() => {
         // إزالة أي خريطة سابقة
         if (window.employeeMapInstance) {
           window.employeeMapInstance.remove();
@@ -395,37 +410,85 @@
         }
         const mapDiv = document.getElementById('employeeMap');
         if (!mapDiv) return;
-        const map = L.map('employeeMap').setView([center.latitude, center.longitude], 15);
+        mapDiv.innerHTML = '';
+        mapboxgl.accessToken = mapboxToken;
+        const map = new mapboxgl.Map({
+          container: 'employeeMap',
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: [center.longitude, center.latitude],
+          zoom: 15
+        });
         window.employeeMapInstance = map;
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19,
-          attribution: '© OpenStreetMap'
-        }).addTo(map);
         // ماركر المركز
-        const centerMarker = L.marker([center.latitude, center.longitude], {title: 'مركزك', alt: 'مركزك'}).addTo(map);
-        centerMarker.bindPopup(`<b>مركزك:</b> ${center.name || ''}`);
-        // دائرة نطاق المركز
-        L.circle([center.latitude, center.longitude], {
-          color: '#0077b6',
-          fillColor: '#90e0ef',
-          fillOpacity: 0.2,
-          radius: center.radius || 100
-        }).addTo(map);
+        const centerMarker = new mapboxgl.Marker({color: '#0077b6'})
+          .setLngLat([center.longitude, center.latitude])
+          .setPopup(new mapboxgl.Popup().setHTML(`<div style="direction:rtl;text-align:right;font-family:'Noto Naskh Arabic','Amiri','Tahoma',Arial,sans-serif;font-size:1.1em;"><b>مركزك:</b> ${center.name || ''}</div>`));
+        centerMarker.addTo(map);
+        // دائرة نطاق المركز (باستخدام مصدر/طبقة دائرية)
+        map.on('load', () => {
+          map.addSource('center-circle', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [center.longitude, center.latitude] }
+            }
+          });
+          map.addLayer({
+            id: 'center-circle-layer',
+            type: 'circle',
+            source: 'center-circle',
+            paint: {
+              'circle-radius': {
+                stops: [
+                  [0, 0],
+                  [20, center.radius / 0.075] // تقريب لنصف القطر بالبكسل
+                ],
+                base: 2
+              },
+              'circle-color': '#90e0ef',
+              'circle-opacity': 0.2,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#0077b6'
+            }
+          });
+        });
         // ماركر الموظف
         if (employeePosition && employeePosition.latitude && employeePosition.longitude) {
-          const empMarker = L.marker([employeePosition.latitude, employeePosition.longitude], {title: 'موقعك الحالي', alt: 'موقعك'}).addTo(map);
-          empMarker.bindPopup('موقعك الحالي').openPopup();
-          // رسم خط المسار
-          L.polyline([
-            [employeePosition.latitude, employeePosition.longitude],
-            [center.latitude, center.longitude]
-          ], {color: '#43a047', weight: 4, dashArray: '8,8'}).addTo(map);
-          // توسيع الخريطة لتشمل المركز والموظف
-          const bounds = L.latLngBounds([
-            [employeePosition.latitude, employeePosition.longitude],
-            [center.latitude, center.longitude]
-          ]);
-          map.fitBounds(bounds.pad(0.2));
+          const empMarker = new mapboxgl.Marker({color: '#43a047'})
+            .setLngLat([employeePosition.longitude, employeePosition.latitude])
+            .setPopup(new mapboxgl.Popup().setHTML(`<div style="direction:rtl;text-align:right;font-family:'Noto Naskh Arabic','Amiri','Tahoma',Arial,sans-serif;font-size:1.1em;">موقعك الحالي</div>`));
+          empMarker.addTo(map);
+          // رسم خط بين الموظف والمركز
+          map.on('load', () => {
+            map.addSource('route', {
+              type: 'geojson',
+              data: {
+                type: 'Feature',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [
+                    [employeePosition.longitude, employeePosition.latitude],
+                    [center.longitude, center.latitude]
+                  ]
+                }
+              }
+            });
+            map.addLayer({
+              id: 'route-layer',
+              type: 'line',
+              source: 'route',
+              paint: {
+                'line-color': '#43a047',
+                'line-width': 4,
+                'line-dasharray': [8, 8]
+              }
+            });
+            // توسيع الخريطة لتشمل المركز والموظف
+            const bounds = new mapboxgl.LngLatBounds();
+            bounds.extend([employeePosition.longitude, employeePosition.latitude]);
+            bounds.extend([center.longitude, center.latitude]);
+            map.fitBounds(bounds, {padding: 40});
+          });
         }
       });
     }
@@ -500,10 +563,9 @@
         locationWatchId = navigator.geolocation.watchPosition(
           async (position) => {
             if (!position || !position.coords) return;
+            // لم يعد هناك شرط تجاهل الحركة بسبب الدقة
             if (position.coords.accuracy > 100) {
-              // تجاهل القياسات غير الدقيقة
-              if (detailsSpan) detailsSpan.innerHTML += '<br><span style="color:#d32f2f;">⚠️ دقة الموقع ضعيفة ولن يتم تسجيل الحركة (الدقة: ' + Math.round(position.coords.accuracy) + 'م)</span>';
-              return;
+              if (detailsSpan) detailsSpan.innerHTML += '<br><span style="color:#d32f2f;">⚠️ دقة الموقع ضعيفة، لكن سيتم تسجيل الحركة (الدقة: ' + Math.round(position.coords.accuracy) + 'م)</span>';
             }
             const distance = getDistance(
               position.coords.latitude,
